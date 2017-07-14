@@ -154,6 +154,7 @@ load_obj(&x, "res/" #x ".obj");
     glUniformMatrix4fv(glGetUniformLocation(board_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
     glUniformMatrix4fv(glGetUniformLocation(board_shader, "view"),  1, GL_FALSE, &view.m[0]);
     glUniformMatrix4fv(glGetUniformLocation(board_shader, "model"),  1, GL_FALSE, &board_world.m[0]);
+    glUniform3f(glGetUniformLocation(board_shader, "viewPos"), view.xw, view.yw, view.zw);
     
     draw_obj(&board);
     
@@ -166,6 +167,7 @@ load_obj(&x, "res/" #x ".obj");
     for (int i = 0; i < 8; ++i) {
       for (int j = 0; j < 8; ++j) {
         glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &top_left.m[0]);
+        glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
         glUniform1i(glGetUniformLocation(piece_shader, "white"), (i + j) % 2);
         
         draw_obj(&pawn);
