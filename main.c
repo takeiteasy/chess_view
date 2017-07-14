@@ -12,6 +12,9 @@ static const int SCREEN_WIDTH = 640, SCREEN_HEIGHT = 480;
 static SDL_Window* window;
 static SDL_GLContext context;
 
+#define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
+#define BOARD_STEP 6.f
+
 #undef GLAD_DEBUG
 
 #ifdef GLAD_DEBUG
@@ -47,6 +50,11 @@ void cleanup() {
   SDL_GL_DeleteContext(context);
   printf("Goodbye!\n");
 }
+
+typedef struct {
+  mat4 world;
+  obj_t* model;
+} piece_t;
 
 int main(int argc, const char* argv[]) {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -97,10 +105,10 @@ int main(int argc, const char* argv[]) {
   glCullFace(GL_BACK);
   
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
-  mat4 view = mat4_view_look_at(vec3_new(0.f, 5.f, 10.f),
+  mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, 45.f),
                                 vec3_new(0.f, 2.f, 0.f),
                                 vec3_new(0.f, 1.f, 0.f));
-  mat4 model = mat4_id();
+  mat4 board_world = mat4_id();
   
   GLuint shader = load_shader_file("test.vert.glsl", "test.frag.glsl");
   
@@ -109,6 +117,7 @@ obj_t x; \
 load_obj(&x, "res/" #x ".obj");
   
   LOAD_PIECE(board);
+  LOAD_PIECE(pawn);
   LOAD_PIECE(bishop);
   LOAD_PIECE(knight);
   LOAD_PIECE(rook);
@@ -135,7 +144,7 @@ load_obj(&x, "res/" #x ".obj");
     now = SDL_GetTicks();
     delta = (float)(now - then) / 1000.0f;
     
-    model = mat4_mul_mat4(model, mat4_rotation_y(DEG2RAD(10.f) * delta));
+    view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(10.f) * delta));
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
@@ -143,9 +152,19 @@ load_obj(&x, "res/" #x ".obj");
     
     glUniformMatrix4fv(glGetUniformLocation(shader, "projection"),  1, GL_FALSE, &proj.m[0]);
     glUniformMatrix4fv(glGetUniformLocation(shader, "view"),  1, GL_FALSE, &view.m[0]);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &model.m[0]);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &board_world.m[0]);
     
     draw_obj(&board);
+    
+    mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f)));
+    for (int i = 0; i < 8; ++i) {
+      for (int j = 0; j < 8; ++j) {
+        glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &top_left.m[0]);
+        draw_obj(&pawn);
+        top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
+      }
+      top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f + ((i + 1) * BOARD_STEP))));
+    }
     
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
