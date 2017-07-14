@@ -91,10 +91,14 @@ int main(int argc, const char* argv[]) {
   
   glClearColor(0.93, 0.93, 0.93, 1.0f);
   glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glCullFace(GL_BACK);
   
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
-  mat4 view = mat4_view_look_at(vec3_new(0.f, 2.f, 2.2f),
-                                vec3_new(0.f, .8f, 0.f),
+  mat4 view = mat4_view_look_at(vec3_new(0.f, 5.f, 10.f),
+                                vec3_new(0.f, 2.f, 0.f),
                                 vec3_new(0.f, 1.f, 0.f));
   mat4 model = mat4_id();
   
@@ -131,6 +135,8 @@ load_obj(&x, "res/" #x ".obj");
     now = SDL_GetTicks();
     delta = (float)(now - then) / 1000.0f;
     
+    model = mat4_mul_mat4(model, mat4_rotation_y(DEG2RAD(10.f) * delta));
+    
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     glUseProgram(shader);
@@ -139,9 +145,10 @@ load_obj(&x, "res/" #x ".obj");
     glUniformMatrix4fv(glGetUniformLocation(shader, "view"),  1, GL_FALSE, &view.m[0]);
     glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &model.m[0]);
     
-    draw_obj(&knight);
+    draw_obj(&board);
     
     glUseProgram(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
     
     SDL_GL_SwapWindow(window);
   }

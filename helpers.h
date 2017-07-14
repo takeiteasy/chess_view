@@ -16,6 +16,8 @@
 
 #include "3rdparty/glad.h"
 
+#define DEG2RAD(X) (X * .01745329251994329576f)
+
 #define GLSL(VERSION,CODE) "#version " #VERSION "\n" #CODE
 
 GLuint load_shader_str(const char*, const char*);
