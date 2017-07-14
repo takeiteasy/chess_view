@@ -110,7 +110,8 @@ int main(int argc, const char* argv[]) {
                                 vec3_new(0.f, 1.f, 0.f));
   mat4 board_world = mat4_id();
   
-  GLuint shader = load_shader_file("test.vert.glsl", "test.frag.glsl");
+  GLuint board_shader = load_shader_file("default.vert.glsl", "board.frag.glsl");
+  GLuint piece_shader = load_shader_file("default.vert.glsl", "piece.frag.glsl");
   
 #define LOAD_PIECE(x) \
 obj_t x; \
@@ -148,18 +149,25 @@ load_obj(&x, "res/" #x ".obj");
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
-    glUseProgram(shader);
+    glUseProgram(board_shader);
     
-    glUniformMatrix4fv(glGetUniformLocation(shader, "projection"),  1, GL_FALSE, &proj.m[0]);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "view"),  1, GL_FALSE, &view.m[0]);
-    glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &board_world.m[0]);
+    glUniformMatrix4fv(glGetUniformLocation(board_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
+    glUniformMatrix4fv(glGetUniformLocation(board_shader, "view"),  1, GL_FALSE, &view.m[0]);
+    glUniformMatrix4fv(glGetUniformLocation(board_shader, "model"),  1, GL_FALSE, &board_world.m[0]);
     
     draw_obj(&board);
+    
+    glUseProgram(piece_shader);
+    
+    glUniformMatrix4fv(glGetUniformLocation(piece_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
+    glUniformMatrix4fv(glGetUniformLocation(piece_shader, "view"),  1, GL_FALSE, &view.m[0]);
     
     mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f)));
     for (int i = 0; i < 8; ++i) {
       for (int j = 0; j < 8; ++j) {
-        glUniformMatrix4fv(glGetUniformLocation(shader, "model"),  1, GL_FALSE, &top_left.m[0]);
+        glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &top_left.m[0]);
+        glUniform1i(glGetUniformLocation(piece_shader, "white"), (i + j) % 2);
+        
         draw_obj(&pawn);
         top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
       }
@@ -178,7 +186,8 @@ load_obj(&x, "res/" #x ".obj");
   free_obj(&rook);
   free_obj(&king);
   free_obj(&queen);
-  glDeleteProgram(shader);
+  glDeleteProgram(board_shader);
+  glDeleteProgram(piece_shader);
   
   return 0;
 }
