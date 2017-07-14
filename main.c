@@ -4,16 +4,19 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
 #include "3rdparty/linalgb.h"
+#define SLIM_HASH_IMPLEMENTATION
+#include "3rdparty/slim_hash.h"
 #include "obj.h"
 #include "helpers.h"
 
-static const int SCREEN_WIDTH = 640, SCREEN_HEIGHT = 480;
+static const int SCREEN_WIDTH = 640, SCREEN_HEIGHT = 480, FBO_SIZE = 1024;
 
 static SDL_Window* window;
 static SDL_GLContext context;
 
 #define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
 #define BOARD_STEP 6.f
+#define BOARD_TOP -21.f
 
 #undef GLAD_DEBUG
 
@@ -51,10 +54,35 @@ void cleanup() {
   printf("Goodbye!\n");
 }
 
-typedef struct {
-  mat4 world;
-  obj_t* model;
-} piece_t;
+static char grid[64];
+
+SH_GEN_DECL(dict, char, obj_t*);
+SH_GEN_HASH_IMPL(dict, char, obj_t*);
+static struct dict piece_map;
+
+void fen_to_grid(const char* fen) {
+  int cur_row = 0, cur_col = 0;
+  for (int i = 0; i < strlen(fen); ++i) {
+    char c = fen[i];
+    if (c == ' ')
+      break;
+    
+    if (c == '/') {
+      cur_row += 1;
+      cur_col  = 0;
+      continue;
+    }
+    
+    if (c >= '1' && c <= '8') {
+      int v = (int)c - 48;
+      for (int j = 0; j < v; ++j) {
+        grid[cur_row * 8 + cur_col++] = ' ';
+      }
+    } else {
+      grid[cur_row * 8 + cur_col++] = c;
+    }
+  }
+}
 
 int main(int argc, const char* argv[]) {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -65,6 +93,12 @@ int main(int argc, const char* argv[]) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+  
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+  
+  SDL_GL_SetSwapInterval(1);
   
   window = SDL_CreateWindow(argv[0],
                             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -104,6 +138,52 @@ int main(int argc, const char* argv[]) {
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glCullFace(GL_BACK);
   
+  glEnable(GL_LINE_SMOOTH);
+  glEnable(GL_POLYGON_SMOOTH);
+  glEnable(GL_MULTISAMPLE);
+  
+  float planeVertices[] = {
+     25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
+    -25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,   0.0f,  0.0f,
+    -25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
+    
+     25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
+    -25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
+     25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,  25.0f, 25.0f
+  };
+  
+  GLuint planeVAO, planeVBO;
+  glGenVertexArrays(1, &planeVAO);
+  glGenBuffers(1, &planeVBO);
+  glBindVertexArray(planeVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+  glBindVertexArray(0);
+  
+  GLuint depthMapFBO;
+  glGenFramebuffers(1, &depthMapFBO);
+  
+  GLuint depthMap;
+  glGenTextures(1, &depthMap);
+  glBindTexture(GL_TEXTURE_2D, depthMap);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, FBO_SIZE, FBO_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  
+  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
   mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, 45.f),
                                 vec3_new(0.f, 2.f, 0.f),
@@ -113,17 +193,25 @@ int main(int argc, const char* argv[]) {
   GLuint board_shader = load_shader_file("default.vert.glsl", "board.frag.glsl");
   GLuint piece_shader = load_shader_file("default.vert.glsl", "piece.frag.glsl");
   
-#define LOAD_PIECE(x) \
-obj_t x; \
-load_obj(&x, "res/" #x ".obj");
+  dict_new(&piece_map);
   
-  LOAD_PIECE(board);
-  LOAD_PIECE(pawn);
-  LOAD_PIECE(bishop);
-  LOAD_PIECE(knight);
-  LOAD_PIECE(rook);
-  LOAD_PIECE(king);
-  LOAD_PIECE(queen);
+#define LOAD_PIECE(x, c) \
+obj_t x; \
+load_obj(&x, "res/" #x ".obj"); \
+if (c) { \
+  dict_put(&piece_map, (char)c, &x); \
+  dict_put(&piece_map, (char)(c - 32), &x); \
+}
+  
+  LOAD_PIECE(board,  0);
+  LOAD_PIECE(pawn,   'p');
+  LOAD_PIECE(bishop, 'b');
+  LOAD_PIECE(knight, 'n');
+  LOAD_PIECE(rook,   'r');
+  LOAD_PIECE(king,   'k');
+  LOAD_PIECE(queen,  'q');
+  
+  fen_to_grid(DEFAULT_FEN);
   
   SDL_bool running = SDL_TRUE;
   SDL_Event e;
@@ -166,14 +254,18 @@ load_obj(&x, "res/" #x ".obj");
     mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f)));
     for (int i = 0; i < 8; ++i) {
       for (int j = 0; j < 8; ++j) {
+        char grid_c = grid[i * 8 + j];
+        if (grid_c == ' ')
+          continue;
+        
         glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &top_left.m[0]);
         glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
-        glUniform1i(glGetUniformLocation(piece_shader, "white"), (i + j) % 2);
+        glUniform1i(glGetUniformLocation(piece_shader, "white"), ((int)grid_c < 98));
         
-        draw_obj(&pawn);
+        draw_obj(dict_get(&piece_map, grid_c, NULL));
         top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
       }
-      top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f + ((i + 1) * BOARD_STEP))));
+      top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP, 0.f, BOARD_TOP + ((i + 1) * BOARD_STEP))));
     }
     
     glUseProgram(0);
@@ -188,8 +280,13 @@ load_obj(&x, "res/" #x ".obj");
   free_obj(&rook);
   free_obj(&king);
   free_obj(&queen);
+  glDeleteVertexArrays(1, &planeVAO);
+  glDeleteBuffers(1, &planeVBO);
+  glDeleteFramebuffers(1, &depthMapFBO);
+  glDeleteTextures(1, &depthMap);
   glDeleteProgram(board_shader);
   glDeleteProgram(piece_shader);
+  dict_destroy(&piece_map);
   
   return 0;
 }
