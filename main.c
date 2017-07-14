@@ -17,6 +17,7 @@ static SDL_GLContext context;
 #define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
 #define BOARD_STEP 6.f
 #define BOARD_TOP -21.f
+#define DRAG_SPEED 15.f
 
 #undef GLAD_DEBUG
 
@@ -142,57 +143,28 @@ int main(int argc, const char* argv[]) {
   glEnable(GL_POLYGON_SMOOTH);
   glEnable(GL_MULTISAMPLE);
   
-  float planeVertices[] = {
-     25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
-    -25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,   0.0f,  0.0f,
-    -25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
-    
-     25.0f, -0.5f,  25.0f,  0.0f, 1.0f, 0.0f,  25.0f,  0.0f,
-    -25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,   0.0f, 25.0f,
-     25.0f, -0.5f, -25.0f,  0.0f, 1.0f, 0.0f,  25.0f, 25.0f
+  GLuint quad_vao, quad_vbo;
+  float quad_verts[] = {
+    // positions        // texture Coords
+    -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
+    -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
+     1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
+     1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
   };
-  
-  GLuint planeVAO, planeVBO;
-  glGenVertexArrays(1, &planeVAO);
-  glGenBuffers(1, &planeVBO);
-  glBindVertexArray(planeVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
+  // setup plane VAO
+  glGenVertexArrays(1, &quad_vao);
+  glGenBuffers(1, &quad_vbo);
+  glBindVertexArray(quad_vao);
+  glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quad_verts), &quad_verts, GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-  glEnableVertexAttribArray(2);
-  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-  glBindVertexArray(0);
-  
-  GLuint depthMapFBO;
-  glGenFramebuffers(1, &depthMapFBO);
-  
-  GLuint depthMap;
-  glGenTextures(1, &depthMap);
-  glBindTexture(GL_TEXTURE_2D, depthMap);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, FBO_SIZE, FBO_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  
-  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-  glDrawBuffer(GL_NONE);
-  glReadBuffer(GL_NONE);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  
-  mat4 light_projection = mat4_orthographic(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 7.5f);
-  mat4 light_view = mat4_view_look_at(vec3_new(40.f, 35.f, 40.f),
-                                      vec3_new(0.f, 0.f, 0.f),
-                                      vec3_new(0.f, 1.f, 0.f));
-  mat4 light_space_mat = mat4_mul_mat4(light_projection, light_view);
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
   
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
-  mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, 45.f),
-                                vec3_new(0.f, 2.f, 0.f),
+  mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, -45.f),
+                                vec3_new(0.f, -2.f, 0.f),
                                 vec3_new(0.f, 1.f, 0.f));
   mat4 board_world = mat4_id();
   
@@ -219,7 +191,7 @@ if (c) { \
   
   fen_to_grid(DEFAULT_FEN);
   
-  SDL_bool running = SDL_TRUE, return_from_fb = SDL_FALSE;
+  SDL_bool running = SDL_TRUE, dragging = SDL_FALSE;
   SDL_Event e;
   
   Uint32 now = SDL_GetTicks();
@@ -227,34 +199,33 @@ if (c) { \
   float  delta;
   
   while (running) {
+    then = now;
+    now = SDL_GetTicks();
+    delta = (float)(now - then) / 1000.0f;
+    
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
         case SDL_QUIT:
           running = SDL_FALSE;
           break;
+        case SDL_MOUSEBUTTONDOWN:
+          if (e.button.button == SDL_BUTTON_LEFT)
+            dragging = SDL_TRUE;
+          break;
+        case SDL_MOUSEBUTTONUP:
+          if (e.button.button == SDL_BUTTON_LEFT)
+            dragging = SDL_FALSE;
+          break;
+        case SDL_MOUSEMOTION:
+          if (dragging) {
+            view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD((float)e.motion.xrel * DRAG_SPEED) * delta));
+          }
+          break;
       }
     }
     
-    then = now;
-    now = SDL_GetTicks();
-    delta = (float)(now - then) / 1000.0f;
-    
-    view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(10.f) * delta));
-    
-    glViewport(0, 0, FBO_SIZE, FBO_SIZE);
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glClear(GL_DEPTH_BUFFER_BIT);
-    glActiveTexture(GL_TEXTURE0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return_from_fb = SDL_TRUE;
-    goto RENDER_SCENE;
-    
-  POST_FRAMEBUFFER:
-    glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    goto RENDER_SCENE;
     
-  RENDER_SCENE:
     glUseProgram(board_shader);
     
     glUniformMatrix4fv(glGetUniformLocation(board_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
@@ -289,11 +260,6 @@ if (c) { \
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
     
-    if (return_from_fb) {
-      return_from_fb = SDL_FALSE;
-      goto POST_FRAMEBUFFER;
-    }
-    
     SDL_GL_SwapWindow(window);
   }
   
@@ -303,10 +269,8 @@ if (c) { \
   free_obj(&rook);
   free_obj(&king);
   free_obj(&queen);
-  glDeleteVertexArrays(1, &planeVAO);
-  glDeleteBuffers(1, &planeVBO);
-  glDeleteFramebuffers(1, &depthMapFBO);
-  glDeleteTextures(1, &depthMap);
+  glDeleteVertexArrays(1, &quad_vao);
+  glDeleteBuffers(1, &quad_vbo);
   glDeleteProgram(board_shader);
   glDeleteProgram(piece_shader);
   dict_destroy(&piece_map);
