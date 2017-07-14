@@ -184,6 +184,12 @@ int main(int argc, const char* argv[]) {
   glReadBuffer(GL_NONE);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   
+  mat4 light_projection = mat4_orthographic(-10.0f, 10.0f, -10.0f, 10.0f, 1.0f, 7.5f);
+  mat4 light_view = mat4_view_look_at(vec3_new(40.f, 35.f, 40.f),
+                                      vec3_new(0.f, 0.f, 0.f),
+                                      vec3_new(0.f, 1.f, 0.f));
+  mat4 light_space_mat = mat4_mul_mat4(light_projection, light_view);
+  
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
   mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, 45.f),
                                 vec3_new(0.f, 2.f, 0.f),
@@ -213,7 +219,7 @@ if (c) { \
   
   fen_to_grid(DEFAULT_FEN);
   
-  SDL_bool running = SDL_TRUE;
+  SDL_bool running = SDL_TRUE, return_from_fb = SDL_FALSE;
   SDL_Event e;
   
   Uint32 now = SDL_GetTicks();
@@ -235,8 +241,20 @@ if (c) { \
     
     view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(10.f) * delta));
     
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glViewport(0, 0, FBO_SIZE, FBO_SIZE);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return_from_fb = SDL_TRUE;
+    goto RENDER_SCENE;
     
+  POST_FRAMEBUFFER:
+    glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    goto RENDER_SCENE;
+    
+  RENDER_SCENE:
     glUseProgram(board_shader);
     
     glUniformMatrix4fv(glGetUniformLocation(board_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
@@ -270,6 +288,11 @@ if (c) { \
     
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
+    
+    if (return_from_fb) {
+      return_from_fb = SDL_FALSE;
+      goto POST_FRAMEBUFFER;
+    }
     
     SDL_GL_SwapWindow(window);
   }
