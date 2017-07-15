@@ -14,12 +14,14 @@
 #include "obj.h"
 #include "helpers.h"
 #include "thread_t/threads.h"
+#include <pcre.h>
 
 static const int SCREEN_WIDTH  = 640,
                  SCREEN_HEIGHT = 480;
 
 static SDL_Window* window;
 static SDL_GLContext context;
+static pcre* re;
 
 #define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
 #define BOARD_STEP 6.f
@@ -27,6 +29,9 @@ static SDL_GLContext context;
 #define DRAG_SPEED 15.f
 #define BUFFER_SIZE 1024
 #define PORT 8888
+
+static int client_connected = 0;
+static char* current_fen = DEFAULT_FEN;
 
 #define LOAD_PIECE(x, c) \
 obj_t x; \
@@ -69,6 +74,7 @@ void post_gl_call(const char *name, void *funcptr, int len_args, ...) {
 void cleanup() {
   SDL_DestroyWindow(window);
   SDL_GL_DeleteContext(context);
+  free(re);
   printf("Goodbye!\n");
 }
 
@@ -134,26 +140,48 @@ void server_thread(void* arg) {
   
   printf("Server is listening on %d\n", PORT);
   
-  socklen_t client_len = sizeof(client);
-  client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
-  
-  if (client_fd < 0) {
-    fprintf(stderr, "Could not establish new connection\n");
+  const char* error;
+  int error_offset;
+  int offset_count;
+  int offsets[8];
+  re = pcre_compile("^([prbnqk1-8]+\/?){8}.*$", PCRE_CASELESS, &error, &error_offset, NULL);
+  if (re == NULL) {
+    fprintf(stderr, "Failed to create FEN regex!\n");
     exit(-1);
   }
   
+  socklen_t client_len = sizeof(client);
+  
   while (1) {
-    int read = recv(client_fd, buf, BUFFER_SIZE, 0);
+    client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
     
-    if (!read)
-      break;
-    
-    if (read < 0) {
-      fprintf(stderr, "Client read failed\n");
+    if (client_fd < 0) {
+      fprintf(stderr, "Could not establish new connection\n");
       exit(-1);
     }
     
-    printf("TEST: %s\n", buf);
+    client_connected = 1;
+    
+    while (1) {
+      int read = recv(client_fd, buf, BUFFER_SIZE, 0);
+      
+      if (!read)
+        break;
+      
+      if (read < 0) {
+        fprintf(stderr, "Client read failed\n");
+        exit(-1);
+      }
+      
+      if (pcre_exec(re, NULL, buf, read, 0, 0, offsets, 8) > 0) {
+        printf("%s", buf);
+        fen_to_grid(buf);
+      }
+      
+      thrd_yield();
+    }
+    
+    client_connected = 0;
   }
 }
 
@@ -247,9 +275,9 @@ int main(int argc, const char* argv[]) {
                                 vec3_new(0.f, 1.f, 0.f));
   mat4 board_world = mat4_id();
   
-  GLuint board_shader = load_shader_file("default.vert.glsl", "board.frag.glsl");
-  GLuint piece_shader = load_shader_file("default.vert.glsl", "piece.frag.glsl");
-  GLuint font_shader  = load_shader_file("font.vert.glsl", "font.frag.glsl");
+  GLuint board_shader = load_shader_file("res/default.vert.glsl", "res/board.frag.glsl");
+  GLuint piece_shader = load_shader_file("res/default.vert.glsl", "res/piece.frag.glsl");
+  GLuint font_shader  = load_shader_file("res/font.vert.glsl",    "res/font.frag.glsl");
   
   dict_new(&piece_map);
   
@@ -261,7 +289,7 @@ int main(int argc, const char* argv[]) {
   LOAD_PIECE(king,   'k');
   LOAD_PIECE(queen,  'q');
   
-  fen_to_grid(DEFAULT_FEN);
+  fen_to_grid(current_fen);
   
   thrd_t server;
   thrd_create(&server, server_thread, NULL);
@@ -292,16 +320,16 @@ int main(int argc, const char* argv[]) {
             dragging = SDL_FALSE;
           break;
         case SDL_MOUSEMOTION:
-          if (dragging) {
+          if (dragging && client_connected)
             view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD((float)e.motion.xrel * DRAG_SPEED) * delta));
-          }
           break;
         case SDL_MOUSEWHEEL:
           break;
       }
     }
     
-    view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(2.f * DRAG_SPEED) * delta));
+    if (!client_connected)
+      view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(2.f * DRAG_SPEED) * delta));
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
@@ -341,11 +369,13 @@ int main(int argc, const char* argv[]) {
       top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP, 0.f, BOARD_TOP + ((i + 1) * BOARD_STEP))));
     }
     
-    glUseProgram(font_shader);
-    
-    glUniform2f(glGetUniformLocation(font_shader, "iResolution"), SCREEN_WIDTH, SCREEN_HEIGHT);
-    glBindVertexArray(plane_VAO);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    if (!client_connected) {
+      glUseProgram(font_shader);
+      
+      glUniform2f(glGetUniformLocation(font_shader, "iResolution"), SCREEN_WIDTH, SCREEN_HEIGHT);
+      glBindVertexArray(plane_VAO);
+      glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
     
     glBindVertexArray(0);
     glUseProgram(0);

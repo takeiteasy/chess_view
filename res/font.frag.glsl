@@ -20,7 +20,7 @@ uniform vec2 iResolution;
 #define INVERT 1
 #define UNDERLINE 2
 
-int TEXT_MODE = NORMAL;
+int TEXT_MODE = INVERT;
 
 vec4 ch_spc = vec4(0x000000,0x000000,0x000000,0x000000);
 vec4 ch_exc = vec4(0x003078,0x787830,0x300030,0x300000);
@@ -235,8 +235,10 @@ float text(vec2 uv)
     
     //Greeting Text
     
-    print_pos = floor(center - vec2(STRWIDTH(22.5),STRHEIGHT(1.0))/2.0);
-       
+    print_pos = floor(center - vec2(STRWIDTH(24.5),STRHEIGHT(1.0))/2.0);
+  
+    col += char(ch_spc,uv);
+  
     col += char(ch_W,uv);
     col += char(ch_a,uv);
     col += char(ch_i,uv);
@@ -264,6 +266,8 @@ float text(vec2 uv)
     col += char(ch_o,uv);
     col += char(ch_n,uv);
     col += char(ch_exc,uv);
+  
+    col += char(ch_spc,uv);
   
     return col;
 }
