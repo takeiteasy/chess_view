@@ -13,8 +13,10 @@
 #include "3rdparty/slim_hash.h"
 #include "obj.h"
 #include "helpers.h"
+#include "thread_t/threads.h"
 
-static const int SCREEN_WIDTH = 640, SCREEN_HEIGHT = 480, FBO_SIZE = 1024;
+static const int SCREEN_WIDTH  = 640,
+                 SCREEN_HEIGHT = 480;
 
 static SDL_Window* window;
 static SDL_GLContext context;
@@ -100,7 +102,7 @@ void fen_to_grid(const char* fen) {
   }
 }
 
-int main(int argc, const char* argv[]) {
+void server_thread(void* arg) {
   int server_fd, client_fd, err;
   struct sockaddr_in server, client;
   char buf[BUFFER_SIZE];
@@ -108,7 +110,7 @@ int main(int argc, const char* argv[]) {
   server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd < 0) {
     fprintf(stderr, "Could not create socket\n");
-    return -1;
+    exit(-1);
   }
   
   server.sin_family = AF_INET;
@@ -121,13 +123,13 @@ int main(int argc, const char* argv[]) {
   err = bind(server_fd, (struct sockaddr *)&server, sizeof(server));
   if (err < 0) {
     fprintf(stderr, "Could not bind socket\n");
-    return -1;
+    exit(-1);
   }
   
   err = listen(server_fd, 128);
   if (err < 0) {
     fprintf(stderr, "Could not listen on socket\n");
-    return -1;
+    exit(-1);
   }
   
   printf("Server is listening on %d\n", PORT);
@@ -137,9 +139,25 @@ int main(int argc, const char* argv[]) {
   
   if (client_fd < 0) {
     fprintf(stderr, "Could not establish new connection\n");
-    return -1;
+    exit(-1);
   }
   
+  while (1) {
+    int read = recv(client_fd, buf, BUFFER_SIZE, 0);
+    
+    if (!read)
+      break;
+    
+    if (read < 0) {
+      fprintf(stderr, "Client read failed\n");
+      exit(-1);
+    }
+    
+    printf("TEST: %s\n", buf);
+  }
+}
+
+int main(int argc, const char* argv[]) {
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     fprintf(stderr, "Failed to initalize SDL!\n");
     return -1;
@@ -187,23 +205,41 @@ int main(int argc, const char* argv[]) {
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glCullFace(GL_BACK);
   
-  GLuint quad_vao, quad_vbo;
-  float quad_verts[] = {
-    -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
-    -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
-     1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
-     1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
+  float plane_vertices[] = {
+    1.f,  1.f, 0.0f,  1.0f, 1.0f,
+    1.f, -1.f, 0.0f,  1.0f, 0.0f,
+    -1.f, -1.f, 0.0f,  0.0f, 0.0f,
+    -1.f,  1.f, 0.0f,  0.0f, 1.0f
   };
   
-  glGenVertexArrays(1, &quad_vao);
-  glGenBuffers(1, &quad_vbo);
-  glBindVertexArray(quad_vao);
-  glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(quad_verts), &quad_verts, GL_STATIC_DRAW);
-  glEnableVertexAttribArray(0);
+  unsigned int plane_indices[] = {
+    0, 1, 3,
+    1, 2, 3
+  };
+  
+  GLuint plane_VAO, VBO, EBO;
+  glGenVertexArrays(1, &plane_VAO);
+  glGenBuffers(1, &VBO);
+  glGenBuffers(1, &EBO);
+  
+  glBindVertexArray(plane_VAO);
+  
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(plane_indices), plane_indices, GL_STATIC_DRAW);
+  
+  glBindBuffer(GL_ARRAY_BUFFER, VBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(plane_vertices), plane_vertices, GL_STATIC_DRAW);
+  
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-  glEnableVertexAttribArray(1);
+  glEnableVertexAttribArray(0);
+  
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+  glEnableVertexAttribArray(1);
+  
+  glBindVertexArray(0);
+  
+  glDeleteBuffers(1, &VBO);
+  glDeleteBuffers(1, &EBO);
   
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
   mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, -50.f),
@@ -213,6 +249,7 @@ int main(int argc, const char* argv[]) {
   
   GLuint board_shader = load_shader_file("default.vert.glsl", "board.frag.glsl");
   GLuint piece_shader = load_shader_file("default.vert.glsl", "piece.frag.glsl");
+  GLuint font_shader  = load_shader_file("font.vert.glsl", "font.frag.glsl");
   
   dict_new(&piece_map);
   
@@ -225,6 +262,9 @@ int main(int argc, const char* argv[]) {
   LOAD_PIECE(queen,  'q');
   
   fen_to_grid(DEFAULT_FEN);
+  
+  thrd_t server;
+  thrd_create(&server, server_thread, NULL);
   
   SDL_bool running = SDL_TRUE, dragging = SDL_FALSE;
   SDL_Event e;
@@ -260,6 +300,8 @@ int main(int argc, const char* argv[]) {
           break;
       }
     }
+    
+    view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD(2.f * DRAG_SPEED) * delta));
     
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
@@ -299,6 +341,13 @@ int main(int argc, const char* argv[]) {
       top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP, 0.f, BOARD_TOP + ((i + 1) * BOARD_STEP))));
     }
     
+    glUseProgram(font_shader);
+    
+    glUniform2f(glGetUniformLocation(font_shader, "iResolution"), SCREEN_WIDTH, SCREEN_HEIGHT);
+    glBindVertexArray(plane_VAO);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    
+    glBindVertexArray(0);
     glUseProgram(0);
     glBindTexture(GL_TEXTURE_2D, 0);
     
@@ -311,10 +360,10 @@ int main(int argc, const char* argv[]) {
   free_obj(&rook);
   free_obj(&king);
   free_obj(&queen);
-  glDeleteVertexArrays(1, &quad_vao);
-  glDeleteBuffers(1, &quad_vbo);
+  glDeleteVertexArrays(1, &plane_VAO);
   glDeleteProgram(board_shader);
   glDeleteProgram(piece_shader);
+  glDeleteProgram(font_shader);
   dict_destroy(&piece_map);
   
   return 0;
