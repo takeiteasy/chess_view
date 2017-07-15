@@ -7,8 +7,8 @@ in vec2  TexCoords;
 
 uniform vec3 viewPos;
 
-#define light_position  vec3(40.f, 35.f, 40.f)
-#define light_direction vec3(-0.2f, -1.0f, -0.3f)
+#define light_position  vec3(0.f, 40.f, 20.f)
+#define light_direction vec3(0.f, 0.f, 0.f)
 
 #define light_ambient  vec3(0.25f, 0.20725f, 0.20725f)
 #define light_diffuse  vec3(0.829f, 0.829f, 0.829f)

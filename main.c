@@ -1,4 +1,9 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 #include "3rdparty/glad.h"
 #include <SDL2/SDL.h>
@@ -18,6 +23,16 @@ static SDL_GLContext context;
 #define BOARD_STEP 6.f
 #define BOARD_TOP -21.f
 #define DRAG_SPEED 15.f
+#define BUFFER_SIZE 1024
+#define PORT 8888
+
+#define LOAD_PIECE(x, c) \
+obj_t x; \
+load_obj(&x, "res/" #x ".obj"); \
+if (c) { \
+  dict_put(&piece_map, (char)c, &x); \
+  dict_put(&piece_map, (char)(c - 32), &x); \
+}
 
 #undef GLAD_DEBUG
 
@@ -86,6 +101,45 @@ void fen_to_grid(const char* fen) {
 }
 
 int main(int argc, const char* argv[]) {
+  int server_fd, client_fd, err;
+  struct sockaddr_in server, client;
+  char buf[BUFFER_SIZE];
+  
+  server_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_fd < 0) {
+    fprintf(stderr, "Could not create socket\n");
+    return -1;
+  }
+  
+  server.sin_family = AF_INET;
+  server.sin_port = htons(PORT);
+  server.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  
+  int opt_val = 1;
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt_val, sizeof opt_val);
+  
+  err = bind(server_fd, (struct sockaddr *)&server, sizeof(server));
+  if (err < 0) {
+    fprintf(stderr, "Could not bind socket\n");
+    return -1;
+  }
+  
+  err = listen(server_fd, 128);
+  if (err < 0) {
+    fprintf(stderr, "Could not listen on socket\n");
+    return -1;
+  }
+  
+  printf("Server is listening on %d\n", PORT);
+  
+  socklen_t client_len = sizeof(client);
+  client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
+  
+  if (client_fd < 0) {
+    fprintf(stderr, "Could not establish new connection\n");
+    return -1;
+  }
+  
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
     fprintf(stderr, "Failed to initalize SDL!\n");
     return -1;
@@ -94,12 +148,6 @@ int main(int argc, const char* argv[]) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-  
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
-  
-  SDL_GL_SetSwapInterval(1);
   
   window = SDL_CreateWindow(argv[0],
                             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -139,19 +187,14 @@ int main(int argc, const char* argv[]) {
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glCullFace(GL_BACK);
   
-  glEnable(GL_LINE_SMOOTH);
-  glEnable(GL_POLYGON_SMOOTH);
-  glEnable(GL_MULTISAMPLE);
-  
   GLuint quad_vao, quad_vbo;
   float quad_verts[] = {
-    // positions        // texture Coords
     -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
     -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
      1.0f,  1.0f, 0.0f, 1.0f, 1.0f,
      1.0f, -1.0f, 0.0f, 1.0f, 0.0f,
   };
-  // setup plane VAO
+  
   glGenVertexArrays(1, &quad_vao);
   glGenBuffers(1, &quad_vbo);
   glBindVertexArray(quad_vao);
@@ -163,8 +206,8 @@ int main(int argc, const char* argv[]) {
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
   
   mat4 proj = mat4_perspective(45.f, .1f, 1000.f, (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT);
-  mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, -45.f),
-                                vec3_new(0.f, -2.f, 0.f),
+  mat4 view = mat4_view_look_at(vec3_new(0.f, 25.f, -50.f),
+                                vec3_new(0.f, -3.f, 0.f),
                                 vec3_new(0.f, 1.f, 0.f));
   mat4 board_world = mat4_id();
   
@@ -173,15 +216,7 @@ int main(int argc, const char* argv[]) {
   
   dict_new(&piece_map);
   
-#define LOAD_PIECE(x, c) \
-obj_t x; \
-load_obj(&x, "res/" #x ".obj"); \
-if (c) { \
-  dict_put(&piece_map, (char)c, &x); \
-  dict_put(&piece_map, (char)(c - 32), &x); \
-}
-  
-  LOAD_PIECE(board,  0);
+  LOAD_PIECE(board,   0);
   LOAD_PIECE(pawn,   'p');
   LOAD_PIECE(bishop, 'b');
   LOAD_PIECE(knight, 'n');
@@ -221,6 +256,8 @@ if (c) { \
             view = mat4_mul_mat4(view, mat4_rotation_y(DEG2RAD((float)e.motion.xrel * DRAG_SPEED) * delta));
           }
           break;
+        case SDL_MOUSEWHEEL:
+          break;
       }
     }
     
@@ -239,6 +276,7 @@ if (c) { \
     
     glUniformMatrix4fv(glGetUniformLocation(piece_shader, "projection"),  1, GL_FALSE, &proj.m[0]);
     glUniformMatrix4fv(glGetUniformLocation(piece_shader, "view"),  1, GL_FALSE, &view.m[0]);
+    glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
     
     mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f)));
     for (int i = 0; i < 8; ++i) {
@@ -246,10 +284,14 @@ if (c) { \
         char grid_c = grid[i * 8 + j];
         if (grid_c == ' ')
           continue;
+        int is_black = ((int)grid_c < 98);
         
-        glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &top_left.m[0]);
-        glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
-        glUniform1i(glGetUniformLocation(piece_shader, "white"), ((int)grid_c < 98));
+        if (is_black) {
+          mat4 tmp = mat4_mul_mat4(top_left, mat4_rotation_y(DEG2RAD(180.f)));
+          glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &tmp.m[0]);
+        } else
+          glUniformMatrix4fv(glGetUniformLocation(piece_shader, "model"),  1, GL_FALSE, &top_left.m[0]);
+        glUniform1i(glGetUniformLocation(piece_shader, "white"), is_black);
         
         draw_obj(dict_get(&piece_map, grid_c, NULL));
         top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));

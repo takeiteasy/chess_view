@@ -1,0 +1,10 @@
+[submodule "obj2header"]
+	path = obj2header
+	url = https://github.com/takeiteasy/obj2header
+[submodule "thread_t"]
+	path = thread_t
+	url = https://github.com/takeiteasy/thread_t
+[submodule "queue_t"]
+	path = queue_t
+	url = git@github.com:takeiteasy/queue_t.git
+	branch = usable
