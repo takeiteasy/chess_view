@@ -100,12 +100,20 @@ void fen_to_grid(const char* fen) {
     if (c >= '1' && c <= '8') {
       int v = (int)c - 48;
       for (int j = 0; j < v; ++j) {
-        grid[cur_row * 8 + cur_col++] = ' ';
+        grid[cur_row * 8 + cur_col++] = 'X';
       }
     } else {
       grid[cur_row * 8 + cur_col++] = c;
     }
   }
+  
+  for (int j = 0; j < 8; ++j) {
+    for (int k = 0; k < 8; ++k) {
+      printf("%c ", grid[j * 8 + k]);
+    }
+    printf("\n");
+  }
+  printf("\n");
 }
 
 void server_thread(void* arg) {
@@ -348,11 +356,13 @@ int main(int argc, const char* argv[]) {
     glUniformMatrix4fv(glGetUniformLocation(piece_shader, "view"),  1, GL_FALSE, &view.m[0]);
     glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
     
-    mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-21.f, 0.f, -21.f)));
+    mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-27.f, 0.f, -21.f)));
     for (int i = 0; i < 8; ++i) {
       for (int j = 0; j < 8; ++j) {
+        top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
+        
         char grid_c = grid[i * 8 + j];
-        if (grid_c == ' ')
+        if (grid_c == 'X')
           continue;
         int is_black = ((int)grid_c < 98);
         
@@ -364,9 +374,8 @@ int main(int argc, const char* argv[]) {
         glUniform1i(glGetUniformLocation(piece_shader, "white"), is_black);
         
         draw_obj(dict_get(&piece_map, grid_c, NULL));
-        top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
       }
-      top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP, 0.f, BOARD_TOP + ((i + 1) * BOARD_STEP))));
+      top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP - BOARD_STEP, 0.f, BOARD_TOP + ((i + 1) * BOARD_STEP))));
     }
     
     if (!client_connected) {
