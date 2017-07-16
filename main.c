@@ -84,7 +84,44 @@ SH_GEN_DECL(dict, char, obj_t*);
 SH_GEN_HASH_IMPL(dict, char, obj_t*);
 static struct dict piece_map;
 
+static char valid_fen_chars[] = {
+  'p', 'r', 'n', 'b', 'k', 'q',
+  'P', 'R', 'N', 'B', 'K', 'Q'
+};
+
 void fen_to_grid(const char* fen) {
+  int fen_total = 0;
+  for (int i = 0; i < strlen(fen); ++i) {
+    char c = fen[i];
+    if (c == ' ')
+      break;
+    if (c == '/')
+      continue;
+    
+    if (c >= '1' && c <= '8')
+      fen_total += ((int)c - 48);
+    else {
+      int is_valid = 0;
+      for (int j = 0; j < 12; ++j) {
+        if (c == valid_fen_chars[j]) {
+          is_valid = 1;
+          break;
+        }
+      }
+      if (is_valid)
+        fen_total += 1;
+      else {
+        fprintf(stderr, "ERROR! Invalid FEN char (%c) in \"%s\"\n", c, fen);
+        fen_to_grid(DEFAULT_FEN);
+        return;
+      }
+    }
+  }
+  if (fen_total < 64) {
+    fprintf(stderr, "ERROR! Invalid FEN string \"%s\"\n", fen);
+    fen_to_grid(DEFAULT_FEN);
+  }
+  
   int cur_row = 0, cur_col = 0;
   for (int i = 0; i < strlen(fen); ++i) {
     char c = fen[i];
@@ -107,13 +144,16 @@ void fen_to_grid(const char* fen) {
     }
   }
   
-  printf("\n");
+#ifdef GLAD_DEBUG
+  printf("---------------\n");
   for (int j = 0; j < 8; ++j) {
     for (int k = 0; k < 8; ++k) {
       printf("%c ", grid[j * 8 + k]);
     }
     printf("\n");
   }
+  printf("---------------\n");
+#endif
 }
 
 void server_thread(void* arg) {
@@ -242,8 +282,8 @@ int main(int argc, const char* argv[]) {
   glCullFace(GL_BACK);
   
   float plane_vertices[] = {
-    1.f,  1.f, 0.0f,  1.0f, 1.0f,
-    1.f, -1.f, 0.0f,  1.0f, 0.0f,
+     1.f,  1.f, 0.0f,  1.0f, 1.0f,
+     1.f, -1.f, 0.0f,  1.0f, 0.0f,
     -1.f, -1.f, 0.0f,  0.0f, 0.0f,
     -1.f,  1.f, 0.0f,  0.0f, 1.0f
   };
@@ -356,7 +396,7 @@ int main(int argc, const char* argv[]) {
     glUniformMatrix4fv(glGetUniformLocation(piece_shader, "view"),  1, GL_FALSE, &view.m[0]);
     glUniform3f(glGetUniformLocation(piece_shader, "viewPos"), view.xw, view.yw, view.zw);
     
-    mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(-27.f, 0.f, -21.f)));
+    mat4 top_left = mat4_mul_mat4(mat4_id(), mat4_translation(vec3_new(BOARD_TOP - BOARD_STEP, 0.f, BOARD_TOP)));
     for (int i = 0; i < 8; ++i) {
       for (int j = 0; j < 8; ++j) {
         top_left = mat4_mul_mat4(top_left, mat4_translation(vec3_new(BOARD_STEP, 0.f, 0.f)));
