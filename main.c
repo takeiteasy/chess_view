@@ -93,7 +93,7 @@ void fen_to_grid(const char* fen) {
   int fen_total = 0;
   for (int i = 0; i < strlen(fen); ++i) {
     char c = fen[i];
-    if (c == ' ')
+    if (c == ' ' || c == '\n')
       break;
     if (c == '/')
       continue;
