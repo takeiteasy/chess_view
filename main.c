@@ -222,7 +222,7 @@ void server_thread(void* arg) {
       }
       
       if (pcre_exec(re, NULL, buf, read, 0, 0, offsets, 8) > 0) {
-        printf("%s", buf);
+        printf("%s\n", buf);
         fen_to_grid(buf);
       }
       
